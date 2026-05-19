@@ -121,13 +121,15 @@ pub fn Loader(comptime options: Options) type {
             // TODO: line size
             // someone may use JSON text as the value for the env var.
             while (reader.takeDelimiterExclusive('\n')) |data| {
+                if (reader.peek(1)) |_| reader.toss(1) else |_| {}
+
                 buf_pos = buf.items.len;
                 if (data.len == 0) {
                     continue;
                 }
 
                 try buf.appendSlice(self.allocator, data);
-                // resotre newline
+                // restore newline
                 try buf.append(self.allocator, '\n');
 
                 if (std.mem.startsWith(u8, std.mem.trimLeft(
