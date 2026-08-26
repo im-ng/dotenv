@@ -50,12 +50,12 @@ pub fn Loader(comptime options: Options) type {
             return &self.parser.ctx;
         }
 
-        pub fn loadFromFile(self: *Self, path: []const u8) !void {
-            var f = try std.fs.cwd().openFile(path, .{});
-            defer f.close();
+        pub fn loadFromFile(self: *Self, io: std.Io, path: []const u8) !void {
+            var f = try std.Io.Dir.cwd().openFile(io, path, .{});
+            defer f.close(io);
 
             var buffer: [4096]u8 = undefined;
-            var reader = f.readerStreaming(&buffer);
+            var reader = f.readerStreaming(io, &buffer);
             return try self.loadFromStream(&reader.interface);
         }
 
@@ -132,7 +132,7 @@ pub fn Loader(comptime options: Options) type {
                 // restore newline
                 try buf.append(self.allocator, '\n');
 
-                if (std.mem.startsWith(u8, std.mem.trimLeft(
+                if (std.mem.startsWith(u8, std.mem.trimStart(
                     u8,
                     buf.items,
                     // ASCII Whitespace

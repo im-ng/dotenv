@@ -16,20 +16,20 @@ pub const Options = @import("./loader.zig").Options;
 ///
 /// Where multiple declarations for the same environment variable exist in `.env`
 /// file, the *first one* will be applied.
-pub fn load(allocator: std.mem.Allocator, comptime options: Options) !void {
+pub fn load(allocator: std.mem.Allocator, io: std.Io, comptime options: Options) !void {
     var finder = FileFinder.default();
     const path = try finder.find(allocator);
     defer allocator.free(path);
 
-    try loadFrom(allocator, path, options);
+    try loadFrom(allocator, io, path, options);
 }
 
 /// Loads the `.env` file from the given path.
-pub fn loadFrom(allocator: std.mem.Allocator, path: []const u8, comptime options: Options) !void {
+pub fn loadFrom(allocator: std.mem.Allocator, io: std.Io, path: []const u8, comptime options: Options) !void {
     var loader = Loader(options).init(allocator);
     defer loader.deinit();
 
-    try loader.loadFromFile(path);
+    try loader.loadFromFile(io, path);
 }
 
 pub fn getData(allocator: std.mem.Allocator) !std.StringHashMap(?[]const u8) {
@@ -39,11 +39,11 @@ pub fn getData(allocator: std.mem.Allocator) !std.StringHashMap(?[]const u8) {
     return getDataFrom(allocator, path);
 }
 
-pub fn getDataFrom(allocator: std.mem.Allocator, path: []const u8) !std.StringHashMap(?[]const u8) {
+pub fn getDataFrom(allocator: std.mem.Allocator, io: std.Io, path: []const u8) !std.StringHashMap(?[]const u8) {
     var loader = Loader(.{ .dry_run = true }).init(allocator);
     defer loader.deinit();
 
-    try loader.loadFromFile(path);
+    try loader.loadFromFile(io, path);
     return loader.envs().move();
 }
 

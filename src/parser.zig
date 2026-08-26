@@ -118,13 +118,11 @@ pub const LineParser = struct {
 
         var output_buf: std.ArrayList(u8) = .empty;
         defer output_buf.deinit(self.allocator);
-        var output = output_buf.writer(self.allocator);
 
         var substitution_mode = SubstitutionMode.none;
 
         var name_buf: std.ArrayList(u8) = .empty;
         defer name_buf.deinit(self.allocator);
-        var substitution_name = name_buf.writer(self.allocator);
 
         for (0.., self.line) |i, c| {
             _ = i;
@@ -138,9 +136,9 @@ pub const LineParser = struct {
                 }
             } else if (escaped) {
                 if (c == '\\' or c == '\'' or c == '"' or c == '$' or c == ' ') {
-                    try output.writeByte(c);
+                    try output_buf.append(self.allocator, c);
                 } else if (c == 'n') {
-                    try output.writeByte('\n');
+                    try output_buf.append(self.allocator, '\n');
                 } else {
                     return Error.InvalidValue;
                 }
@@ -150,11 +148,11 @@ pub const LineParser = struct {
                 if (c == '\'') {
                     strong_quote = false;
                 } else {
-                    try output.writeByte(c);
+                    try output_buf.append(self.allocator, c);
                 }
             } else if (substitution_mode != .none) {
                 if (std.ascii.isAlphanumeric(c)) {
-                    try substitution_name.writeByte(c);
+                    try name_buf.append(self.allocator, c);
                 } else {
                     switch (substitution_mode) {
                         .none => unreachable,
@@ -162,7 +160,7 @@ pub const LineParser = struct {
                             if (c == '{' and name_buf.items.len == 0) {
                                 substitution_mode = .escaped_block;
                             } else {
-                                try substitute_variables(&self.ctx, name_buf.items, output);
+                                try substitute_variables(&self.ctx, name_buf.items, &output_buf, self.allocator);
                                 name_buf.clearRetainingCapacity();
                                 if (c == '$') {
                                     if (!strong_quote and !escaped) {
@@ -172,17 +170,17 @@ pub const LineParser = struct {
                                     }
                                 } else {
                                     substitution_mode = .none;
-                                    try output.writeByte(c);
+                                    try output_buf.append(self.allocator, c);
                                 }
                             }
                         },
                         .escaped_block => {
                             if (c == '}') {
                                 substitution_mode = .none;
-                                try substitute_variables(&self.ctx, name_buf.items, output);
+                                try substitute_variables(&self.ctx, name_buf.items, &output_buf, self.allocator);
                                 name_buf.clearRetainingCapacity();
                             } else {
-                                try substitution_name.writeByte(c);
+                                try name_buf.append(self.allocator, c);
                             }
                         },
                     }
@@ -199,7 +197,7 @@ pub const LineParser = struct {
                 } else if (c == '\\') {
                     escaped = true;
                 } else {
-                    try output.writeByte(c);
+                    try output_buf.append(self.allocator, c);
                 }
             } else if (c == '\'') {
                 strong_quote = true;
@@ -210,14 +208,14 @@ pub const LineParser = struct {
             } else if (c == ' ' or c == '\t') {
                 expecting_end = true;
             } else {
-                try output.writeByte(c);
+                try output_buf.append(self.allocator, c);
             }
         }
 
         if (substitution_mode == .escaped_block or strong_quote or weak_quote) {
             return Error.InvalidValue;
         } else {
-            try substitute_variables(&self.ctx, name_buf.items, output);
+            try substitute_variables(&self.ctx, name_buf.items, &output_buf, self.allocator);
             name_buf.clearRetainingCapacity();
             return output_buf.toOwnedSlice(self.allocator);
         }
@@ -271,13 +269,10 @@ fn substitute_variables(
     ctx: *std.StringHashMap(?[]const u8),
     name: []const u8,
     output: anytype,
+    gpa: std.mem.Allocator,
 ) !void {
-    if (std.posix.getenv(name)) |value| {
-        _ = try output.write(value);
-    } else {
-        const value = ctx.get(name) orelse "";
-        _ = try output.write(value.?);
-    }
+    const value = (ctx.get(name) orelse null) orelse "";
+    _ = try output.appendSlice(gpa, value);
 }
 
 test "test parse" {
@@ -321,7 +316,9 @@ test "test parse" {
         var buf: std.ArrayList(u8) = .empty;
         defer buf.deinit(allocator);
 
-        try buf.writer(allocator).print("KEY{d}", .{i});
+        const key_str = try std.fmt.allocPrint(allocator, "KEY{d}", .{i});
+        try buf.appendSlice(key_str);
+        allocator.free(key_str);
         const key = buf.items;
 
         _ = try parser.parseLine(line);

@@ -29,7 +29,7 @@ pub fn build(b: *std.Build) void {
         }),
     });
 
-    lib.linkSystemLibrary("c");
+    lib.root_module.linkSystemLibrary("c", .{});
 
     // This declares intent for the library to be installed into the standard
     // location when the user invokes the "install" step (the default step when
@@ -45,7 +45,7 @@ pub fn build(b: *std.Build) void {
             .optimize = optimize,
         }),
     });
-    main_tests.linkSystemLibrary("c");
+    main_tests.root_module.linkSystemLibrary("c", .{});
 
     const run_main_tests = b.addRunArtifact(main_tests);
 
