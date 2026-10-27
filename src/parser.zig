@@ -27,6 +27,8 @@ pub const ParsedResult = struct {
 pub const LineParser = struct {
     /// Context
     ctx: std.StringHashMap(?[]const u8),
+    /// Optional environment map used as fallback during variable substitution.
+    base_env: ?*const std.process.Environ.Map,
     /// Line data
     line: []const u8,
     /// position
@@ -39,6 +41,7 @@ pub const LineParser = struct {
     pub fn init(allocator: std.mem.Allocator) Self {
         return Self{
             .ctx = std.StringHashMap(?[]const u8).init(allocator),
+            .base_env = null,
             .line = "",
             .pos = 0,
             .allocator = allocator,
@@ -116,8 +119,9 @@ pub const LineParser = struct {
         var escaped = false;
         var expecting_end = false;
 
-        var output_buf: std.ArrayList(u8) = .empty;
-        defer output_buf.deinit(self.allocator);
+        var output_buf: std.Io.Writer.Allocating = .init(self.allocator);
+        defer output_buf.deinit();
+        const output = &output_buf.writer;
 
         var substitution_mode = SubstitutionMode.none;
 
@@ -136,9 +140,9 @@ pub const LineParser = struct {
                 }
             } else if (escaped) {
                 if (c == '\\' or c == '\'' or c == '"' or c == '$' or c == ' ') {
-                    try output_buf.append(self.allocator, c);
+                    try output.writeByte(c);
                 } else if (c == 'n') {
-                    try output_buf.append(self.allocator, '\n');
+                    try output.writeByte('\n');
                 } else {
                     return Error.InvalidValue;
                 }
@@ -148,7 +152,7 @@ pub const LineParser = struct {
                 if (c == '\'') {
                     strong_quote = false;
                 } else {
-                    try output_buf.append(self.allocator, c);
+                    try output.writeByte(c);
                 }
             } else if (substitution_mode != .none) {
                 if (std.ascii.isAlphanumeric(c)) {
@@ -160,7 +164,7 @@ pub const LineParser = struct {
                             if (c == '{' and name_buf.items.len == 0) {
                                 substitution_mode = .escaped_block;
                             } else {
-                                try substitute_variables(&self.ctx, name_buf.items, &output_buf, self.allocator);
+                                try substitute_variables(&self.ctx, self.base_env, name_buf.items, output);
                                 name_buf.clearRetainingCapacity();
                                 if (c == '$') {
                                     if (!strong_quote and !escaped) {
@@ -170,14 +174,14 @@ pub const LineParser = struct {
                                     }
                                 } else {
                                     substitution_mode = .none;
-                                    try output_buf.append(self.allocator, c);
+                                    try output.writeByte(c);
                                 }
                             }
                         },
                         .escaped_block => {
                             if (c == '}') {
                                 substitution_mode = .none;
-                                try substitute_variables(&self.ctx, name_buf.items, &output_buf, self.allocator);
+                                try substitute_variables(&self.ctx, self.base_env, name_buf.items, output);
                                 name_buf.clearRetainingCapacity();
                             } else {
                                 try name_buf.append(self.allocator, c);
@@ -197,7 +201,7 @@ pub const LineParser = struct {
                 } else if (c == '\\') {
                     escaped = true;
                 } else {
-                    try output_buf.append(self.allocator, c);
+                    try output.writeByte(c);
                 }
             } else if (c == '\'') {
                 strong_quote = true;
@@ -208,16 +212,16 @@ pub const LineParser = struct {
             } else if (c == ' ' or c == '\t') {
                 expecting_end = true;
             } else {
-                try output_buf.append(self.allocator, c);
+                try output.writeByte(c);
             }
         }
 
         if (substitution_mode == .escaped_block or strong_quote or weak_quote) {
             return Error.InvalidValue;
         } else {
-            try substitute_variables(&self.ctx, name_buf.items, &output_buf, self.allocator);
+            try substitute_variables(&self.ctx, self.base_env, name_buf.items, output);
             name_buf.clearRetainingCapacity();
-            return output_buf.toOwnedSlice(self.allocator);
+            return output_buf.toOwnedSlice();
         }
     }
 
@@ -267,12 +271,21 @@ pub const LineParser = struct {
 /// and then from the context.
 fn substitute_variables(
     ctx: *std.StringHashMap(?[]const u8),
+    base_env: ?*const std.process.Environ.Map,
     name: []const u8,
     output: anytype,
-    gpa: std.mem.Allocator,
 ) !void {
-    const value = (ctx.get(name) orelse null) orelse "";
-    _ = try output.appendSlice(gpa, value);
+    if (ctx.get(name)) |value| {
+        if (value) |v| {
+            _ = try output.write(v);
+        }
+    } else if (base_env) |env| {
+        if (env.get(name)) |value| {
+            _ = try output.write(value);
+        }
+    } else {
+        _ = try output.write("");
+    }
 }
 
 test "test parse" {
@@ -316,10 +329,8 @@ test "test parse" {
         var buf: std.ArrayList(u8) = .empty;
         defer buf.deinit(allocator);
 
-        const key_str = try std.fmt.allocPrint(allocator, "KEY{d}", .{i});
-        try buf.appendSlice(key_str);
-        allocator.free(key_str);
-        const key = buf.items;
+        const key = try std.fmt.allocPrint(allocator, "KEY{d}", .{i});
+        defer allocator.free(key);
 
         _ = try parser.parseLine(line);
 

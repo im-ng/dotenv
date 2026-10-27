@@ -29,9 +29,10 @@ pub fn build(b: *std.Build) void {
         });
         const mod = b.addModule("dotenv", .{
             .root_source_file = b.path("../src/lib.zig"),
+            .target = target,
+            .optimize = optimize,
         });
         exe.root_module.addImport("dotenv", mod);
-        exe.linkSystemLibrary("c");
 
         b.installArtifact(exe);
 
